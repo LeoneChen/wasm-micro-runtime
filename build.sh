@@ -48,7 +48,7 @@ fi
 
 cd ${ROOT_CIR}/product-mini/platforms/linux-sgx
 CC="clang-13" CXX="clang++-13" SGX_SDK=${SGXSAN_DIR} cmake -B build ${CMAKE_FLAGS}
-cmake --build build -j$(nproc)
+cmake --build build
 
 cd ${ROOT_CIR}/product-mini/platforms/linux-sgx/enclave-sample
-CC="clang-13" CXX="clang++-13" SGX_SDK=${SGXSAN_DIR} make ${MAKE_FLAGS} -j$(nproc)
+CC="clang-13" CXX="clang++-13" SGX_SDK=${SGXSAN_DIR} make ${MAKE_FLAGS}
