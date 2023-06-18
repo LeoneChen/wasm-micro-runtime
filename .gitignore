@@ -39,3 +39,7 @@ samples/workload/include/**
 !samples/workload/include/.gitkeep
 
 # core/iwasm/libraries/wasi-threads
+InstrumentStatistics.json
+Enclave.edl.json
+*.cpio.gz
+workdir*

@@ -1,3 +1,11 @@
+#if defined(__cplusplus)
+extern "C"{
+#endif
+void SGXSanLogEnter(const char *str);
+#if defined(__cplusplus)
+}
+#endif
+#define LogEnter SGXSanLogEnter
 /*
  * Copyright (C) 2019 Intel Corporation.  All rights reserved.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -601,6 +609,7 @@ void
 ecall_handle_command(unsigned cmd, unsigned char *cmd_buf,
                      unsigned cmd_buf_size)
 {
+    LogEnter(__func__);
     uint64 *args = (uint64 *)cmd_buf;
     uint32 argc = cmd_buf_size / sizeof(uint64);
 
@@ -656,6 +665,7 @@ ecall_handle_command(unsigned cmd, unsigned char *cmd_buf,
 void
 ecall_iwasm_main(uint8_t *wasm_file_buf, uint32_t wasm_file_size)
 {
+    LogEnter(__func__);
     wasm_module_t wasm_module = NULL;
     wasm_module_inst_t wasm_module_inst = NULL;
     RuntimeInitArgs init_args;

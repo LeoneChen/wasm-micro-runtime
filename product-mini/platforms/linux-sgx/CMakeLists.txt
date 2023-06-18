@@ -98,6 +98,13 @@ set (WAMR_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../..)
 
 include (${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 add_library(vmlib ${WAMR_RUNTIME_LIB_SOURCE})
+if(KAFL_FUZZER)
+set_target_properties(vmlib PROPERTIES COMPILE_FLAGS "-Wno-unused-command-line-argument -fno-discard-value-names -flegacy-pass-manager -Xclang -load -Xclang ${SGX_SDK_DIR}/lib64/libSGXSanPass.so")
+else()
+set(WAMR_RUNTIME_LIB_NON_ASM_SOURCE ${WAMR_RUNTIME_LIB_SOURCE})
+list(FILTER WAMR_RUNTIME_LIB_NON_ASM_SOURCE EXCLUDE REGEX ".*[.]s")
+set_source_files_properties(${WAMR_RUNTIME_LIB_NON_ASM_SOURCE} PROPERTIES COMPILE_FLAGS "-Wno-unused-command-line-argument -fno-discard-value-names -flegacy-pass-manager -Xclang -load -Xclang ${SGX_SDK_DIR}/lib64/libSGXSanPass.so -flegacy-pass-manager -Xclang -load -Xclang ${SGX_SDK_DIR}/lib64/libSGXFuzzerPass.so -mllvm --at-enclave=true -mllvm --instrument-json=${CMAKE_CURRENT_SOURCE_DIR}/enclave-sample/InstrumentStatistics.json")
+endif()
 
 add_custom_command (
              OUTPUT libvmlib_untrusted.a
