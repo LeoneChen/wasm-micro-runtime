@@ -23,10 +23,12 @@ typedef long int time_t;
 
 typedef int clockid_t;
 
+/* 
 struct timespec {
     time_t tv_sec;
     long tv_nsec;
 };
+ */
 
 int
 clock_getres(int clock_id, struct timespec *res);
