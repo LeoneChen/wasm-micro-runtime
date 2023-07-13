@@ -1,3 +1,11 @@
+#if defined(__cplusplus)
+extern "C"{
+#endif
+void SGXSanLogEnter(const char *str);
+#if defined(__cplusplus)
+}
+#endif
+#define LogEnter SGXSanLogEnter
 /*
  * Copyright (C) 2019 Intel Corporation.  All rights reserved.
  * SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
@@ -177,6 +185,7 @@ set_error_buf(char *error_buf, uint32 error_buf_size, const char *string)
 bool
 ecall_handle_cmd_init_runtime(uint32_t max_thread_num)
 {
+    LogEnter(__func__);
     bool ret = false;
     RuntimeInitArgs init_args;
 
@@ -209,6 +218,7 @@ exit:
 void
 ecall_handle_cmd_destroy_runtime()
 {
+    LogEnter(__func__);
     wasm_runtime_destroy();
 
     LOG_VERBOSE("Destroy runtime success.\n");
@@ -285,6 +295,7 @@ ecall_handle_cmd_load_module(char *wasm_file, uint32_t wasm_file_size,
                              char *error_buf, uint32_t error_buf_size,
                              uint16_t *enclave_module_idx)
 {
+    LogEnter(__func__);
     bool ret = false;
     uint64 total_size = sizeof(EnclaveModule) + (uint64)wasm_file_size;
     EnclaveModule *enclave_module;
@@ -366,6 +377,7 @@ exit:
 bool
 ecall_handle_cmd_unload_module(uint16_t enclave_module_idx)
 {
+    LogEnter(__func__);
     bool ret = false;
     EnclaveModule *enclave_module =
         (EnclaveModule *)gEnclaveModuleMgr.get(enclave_module_idx);
@@ -445,6 +457,7 @@ ecall_handle_cmd_instantiate_module(uint16_t enclave_module_idx,
                                     char *error_buf, uint32_t error_buf_size,
                                     uint16_t *wasm_module_inst_idx)
 {
+    LogEnter(__func__);
     bool ret = false;
     EnclaveModule *enclave_module = nullptr;
     wasm_module_inst_t module_inst;
@@ -477,6 +490,7 @@ exit:
 bool
 ecall_handle_cmd_deinstantiate_module(uint16_t wasm_module_inst_idx)
 {
+    LogEnter(__func__);
     bool ret = false;
     wasm_module_inst_t module_inst =
         (wasm_module_inst_t)gWasmModuleInstMgr.get(wasm_module_inst_idx);
@@ -502,6 +516,7 @@ bool
 ecall_handle_cmd_get_exception(uint16_t wasm_module_inst_idx, char *exception,
                                uint32_t exception_size)
 {
+    LogEnter(__func__);
     bool ret = false;
     wasm_module_inst_t module_inst = nullptr;
     const char *exception1;
@@ -528,6 +543,7 @@ bool
 ecall_handle_cmd_exec_app_main(uint16_t wasm_module_inst_idx, char **u_app_argv,
                                uint32_t app_argc)
 {
+    LogEnter(__func__);
     bool ret = false;
     wasm_module_inst_t module_inst = nullptr;
     char **app_argv = NULL;
@@ -576,6 +592,7 @@ ecall_handle_cmd_exec_app_func(uint16_t wasm_module_inst_idx,
                                const char *func_name, char **u_app_argv,
                                uint32_t app_argc)
 {
+    LogEnter(__func__);
     bool ret = false;
     wasm_module_inst_t module_inst = nullptr;
     char **app_argv = NULL;
@@ -622,6 +639,7 @@ exit:
 void
 ecall_handle_cmd_set_log_level(int log_level)
 {
+    LogEnter(__func__);
 #if WASM_ENABLE_LOG != 0
     LOG_VERBOSE("Set log verbose level to %d.\n", log_level);
     bh_log_set_verbose_level(log_level);
@@ -638,6 +656,7 @@ ecall_handle_cmd_set_wasi_args(uint16_t enclave_module_idx,
                                const char **addr_pool_list,
                                uint32_t addr_pool_list_size)
 {
+    LogEnter(__func__);
     bool ret = false;
     EnclaveModule *enclave_module = nullptr;
     char *p, *p1;
@@ -758,6 +777,7 @@ ecall_handle_cmd_set_wasi_args(uint16_t enclave_module_idx,
                                const char **addr_pool_list,
                                uint32_t addr_pool_list_size)
 {
+    LogEnter(__func__);
     return true;
 }
 #endif /* end of SGX_DISABLE_WASI */
@@ -765,6 +785,7 @@ ecall_handle_cmd_set_wasi_args(uint16_t enclave_module_idx,
 void
 ecall_handle_cmd_get_version(uint32_t *major, uint32_t *minor, uint32_t *patch)
 {
+    LogEnter(__func__);
     if (major and minor and patch) {
         wasm_runtime_get_version(major, minor, patch);
     }
@@ -774,6 +795,7 @@ ecall_handle_cmd_get_version(uint32_t *major, uint32_t *minor, uint32_t *patch)
 uint32_t
 ecall_handle_cmd_get_pgo_prof_buf_size(uint16_t wasm_module_inst_idx)
 {
+    LogEnter(__func__);
     wasm_module_inst_t module_inst = nullptr;
     uint32 buf_len;
 
@@ -791,6 +813,7 @@ uint32_t
 ecall_handle_cmd_get_pgo_prof_buf_data(uint16_t wasm_module_inst_idx, char *buf,
                                        uint32_t len)
 {
+    LogEnter(__func__);
     wasm_module_inst_t module_inst = nullptr;
     uint32 bytes_dumped;
 
@@ -808,6 +831,7 @@ ecall_handle_cmd_get_pgo_prof_buf_data(uint16_t wasm_module_inst_idx, char *buf,
 uint32_t
 ecall_handle_cmd_get_pgo_prof_buf_size(uint16_t wasm_module_inst_idx)
 {
+    LogEnter(__func__);
     return 0;
 }
 
@@ -815,6 +839,7 @@ uint32_t
 ecall_handle_cmd_get_pgo_prof_buf_data(uint16_t wasm_module_inst_idx, char *buf,
                                        uint32_t len)
 {
+    LogEnter(__func__);
     return 0;
 }
 #endif
@@ -822,6 +847,7 @@ ecall_handle_cmd_get_pgo_prof_buf_data(uint16_t wasm_module_inst_idx, char *buf,
 void
 ecall_iwasm_main(uint8_t *wasm_file_buf, uint32_t wasm_file_size)
 {
+    LogEnter(__func__);
     if (wasm_file_buf == nullptr) {
         return;
     }
