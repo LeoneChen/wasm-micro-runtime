@@ -97,12 +97,18 @@ endif ()
 set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
 set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu11 -ffunction-sections -fdata-sections \
                                      -Wall -Wno-unused-parameter -Wno-pedantic \
-                                     -nostdinc -fvisibility=hidden -fpie" )
+                                     -fvisibility=hidden -fpie" )
+set (BUILD_UNTRUST_PART 1)
 
 set (WAMR_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../..)
 
 include (${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 add_library(vmlib ${WAMR_RUNTIME_LIB_SOURCE})
+if(KAFL_FUZZER)
+set_target_properties(vmlib PROPERTIES COMPILE_FLAGS "-Wno-unused-command-line-argument -fno-discard-value-names -flegacy-pass-manager -Xclang -load -Xclang ${SGX_SDK_DIR}/lib64/libSGXSanPass.so")
+else()
+set_target_properties(vmlib PROPERTIES COMPILE_FLAGS "-Wno-unused-command-line-argument -fno-discard-value-names -flegacy-pass-manager -Xclang -load -Xclang ${SGX_SDK_DIR}/lib64/libSGXSanPass.so -fsanitize-coverage=inline-8bit-counters,bb,no-prune,pc-table,trace-cmp -fprofile-instr-generate -fcoverage-mapping")
+endif()
 
 add_custom_command (
              OUTPUT libvmlib_untrusted.a
