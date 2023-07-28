@@ -569,7 +569,7 @@ dump_pgo_prof_data(uint16_t module_inst_idx, const char *path)
 #endif
 
 int
-main(int argc, char *argv[])
+_hidden_main(int argc, char *argv[])
 {
     int32_t ret = -1;
     char *wasm_file = NULL;
@@ -821,7 +821,7 @@ wamr_pal_create_process(struct wamr_pal_create_process_args *args)
     int stderrfd = -1;
 
     const int argc = 2;
-    char *argv[argc] = { (char *)"./iwasm", (char *)args->argv[0] };
+    char *argv[2] = { (char *)"./iwasm", (char *)args->argv[0] };
 
     uint8_t *wasm_files_buf = NULL;
     void *wasm_modules = NULL;

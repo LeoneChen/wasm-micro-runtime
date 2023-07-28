@@ -46,3 +46,6 @@ samples/workload/include/**
 *.o
 product-mini/app-samples/hello-world/iwasm
 product-mini/app-samples/hello-world/test_wasm.h
+Enclave.edl.json
+workdir*
+*.cpio.gz
