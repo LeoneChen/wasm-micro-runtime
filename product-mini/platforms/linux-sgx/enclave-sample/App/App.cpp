@@ -529,34 +529,63 @@ static void
 app_instance_func(void *wasm_module_inst, const char *func_name, int app_argc,
                   char **app_argv)
 {
-    uint64_t ecall_args_buf[16], *ecall_args = ecall_args_buf;
-    int i, size;
+    uint64_t *ecall_args = NULL;
+    uint32_t total_size = 0;
+    uint32_t strings_size = 0;
+    uint32_t args_count = 3 + app_argc;
+    int i;
 
-    if (app_argc + 3 > sizeof(ecall_args_buf) / sizeof(uint64_t)) {
-        if (!(ecall_args =
-                  (uint64_t *)malloc(sizeof(uint64_t) * (app_argc + 3)))) {
-            printf("Allocate memory failed.\n");
-            return;
+    // Calculate size
+    if (func_name) strings_size += strlen(func_name) + 1;
+    for (i = 0; i < app_argc; i++) {
+        if (app_argv[i]) strings_size += strlen(app_argv[i]) + 1;
+    }
+
+    // Align strings_size to 8 bytes
+    uint32_t strings_padding = (8 - (strings_size % 8)) % 8;
+
+    total_size = args_count * sizeof(uint64_t) + strings_size + strings_padding;
+
+    ecall_args = (uint64_t *)malloc(total_size);
+    if (!ecall_args) {
+        printf("Allocate memory failed.\n");
+        return;
+    }
+    memset(ecall_args, 0, total_size);
+
+    ecall_args[0] = (uintptr_t)wasm_module_inst;
+    ecall_args[2] = (uintptr_t)app_argc;
+
+    uint64_t current_offset = args_count * sizeof(uint64_t);
+    uint8_t *buffer_base = (uint8_t*)ecall_args;
+
+    // Func name
+    if (func_name) {
+        ecall_args[1] = current_offset;
+        strcpy((char*)(buffer_base + current_offset), func_name);
+        current_offset += strlen(func_name) + 1;
+    } else {
+        ecall_args[1] = 0;
+    }
+
+    // App argv
+    for (i = 0; i < app_argc; i++) {
+        if (app_argv[i]) {
+            ecall_args[3 + i] = current_offset;
+            strcpy((char*)(buffer_base + current_offset), app_argv[i]);
+            current_offset += strlen(app_argv[i]) + 1;
+        } else {
+            ecall_args[3 + i] = 0;
         }
     }
 
-    ecall_args[0] = (uintptr_t)wasm_module_inst;
-    ecall_args[1] = (uintptr_t)func_name;
-    ecall_args[2] = (uintptr_t)app_argc;
-    for (i = 0; i < app_argc; i++) {
-        ecall_args[i + 3] = (uintptr_t)app_argv[i];
-    }
-
-    size = (uint32_t)sizeof(uint64_t) * (app_argc + 3);
     if (SGX_SUCCESS
         != ecall_handle_command(g_eid, CMD_EXEC_APP_FUNC, (uint8_t *)ecall_args,
-                                size)) {
+                                total_size)) {
         printf("Call ecall_handle_command() failed.\n");
     }
 
-    if (ecall_args != ecall_args_buf) {
-        free(ecall_args);
-    }
+    free(ecall_args);
 }
 
 static bool
