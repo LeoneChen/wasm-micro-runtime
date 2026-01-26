@@ -664,7 +664,11 @@ dump_pgo_prof_data(void *module_inst, const char *path)
 #endif
 
 int
+#if ENCLAVE_FUZZ
+no_main(int argc, char *argv[])
+#else
 main(int argc, char *argv[])
+#endif
 {
     int32_t ret = -1;
     char *wasm_file = NULL;

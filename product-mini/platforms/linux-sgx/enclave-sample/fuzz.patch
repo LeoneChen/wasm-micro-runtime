@@ -1,0 +1,11 @@
+diff --git a/App/Enclave_u.c b/App/Enclave_u.c
+--- a/App/Enclave_u.c
++++ b/App/Enclave_u.c
+@@ -2147,6 +2147,7 @@ sgx_status_t ecall_iwasm_main(sgx_enclave_id_t eid, uint8_t* wasm_file_buf, uint
+ sgx_status_t fuzz_ecall_handle_command(void) {
+ 	unsigned int cmd;
+ 	DFGetBytes(&cmd, sizeof(unsigned int), "", FUZZ_DATA);
++	cmd = cmd % 15;
+ 	uint8_t* cmd_buf = NULL;
+ 	unsigned int cmd_buf_size;
+ 	DFGetBytes(&cmd_buf_size, sizeof(unsigned int), "", FUZZ_SIZE);
