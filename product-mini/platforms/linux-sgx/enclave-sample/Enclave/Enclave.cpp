@@ -97,10 +97,11 @@ static bool runtime_inited = false;
 static void
 handle_cmd_init_runtime(uint64 *args, uint32 argc)
 {
+    if (argc != 1)
+        return;
+
     uint32 max_thread_num;
     RuntimeInitArgs init_args;
-
-    bh_assert(argc == 1);
 
     /* avoid duplicated init */
     if (runtime_inited) {
@@ -217,6 +218,9 @@ is_xip_file(const uint8 *buf, uint32 size)
 static void
 handle_cmd_load_module(uint64 *args, uint32 argc)
 {
+    if (argc != 4)
+        return;
+
     uint64 *args_org = args;
     char *wasm_file = *(char **)args++;
     uint32 wasm_file_size = *(uint32 *)args++;
@@ -224,8 +228,6 @@ handle_cmd_load_module(uint64 *args, uint32 argc)
     uint32 error_buf_size = *(uint32 *)args++;
     uint64 total_size = sizeof(EnclaveModule) + (uint64)wasm_file_size;
     EnclaveModule *enclave_module;
-
-    bh_assert(argc == 4);
 
     if (!runtime_inited) {
         *(void **)args_org = NULL;
@@ -299,9 +301,11 @@ handle_cmd_load_module(uint64 *args, uint32 argc)
 static void
 handle_cmd_unload_module(uint64 *args, uint32 argc)
 {
+    if (argc != 1)
+        return;
+
     EnclaveModule *enclave_module = *(EnclaveModule **)args++;
 
-    bh_assert(argc == 1);
 
     if (!runtime_inited) {
         return;
@@ -367,6 +371,9 @@ wasm_runtime_get_module_hash(wasm_module_t module)
 static void
 handle_cmd_instantiate_module(uint64 *args, uint32 argc)
 {
+    if (argc != 5)
+        return;
+
     uint64 *args_org = args;
     EnclaveModule *enclave_module = *(EnclaveModule **)args++;
     uint32 stack_size = *(uint32 *)args++;
@@ -374,8 +381,6 @@ handle_cmd_instantiate_module(uint64 *args, uint32 argc)
     char *error_buf = *(char **)args++;
     uint32 error_buf_size = *(uint32 *)args++;
     wasm_module_inst_t module_inst;
-
-    bh_assert(argc == 5);
 
     if (!runtime_inited) {
         *(void **)args_org = NULL;
@@ -397,9 +402,11 @@ handle_cmd_instantiate_module(uint64 *args, uint32 argc)
 static void
 handle_cmd_deinstantiate_module(uint64 *args, uint32 argc)
 {
+    if (argc != 1)
+        return;
+
     wasm_module_inst_t module_inst = *(wasm_module_inst_t *)args++;
 
-    bh_assert(argc == 1);
 
     if (!runtime_inited) {
         return;
@@ -413,13 +420,14 @@ handle_cmd_deinstantiate_module(uint64 *args, uint32 argc)
 static void
 handle_cmd_get_exception(uint64 *args, uint32 argc)
 {
+    if (argc != 3)
+        return;
+
     uint64 *args_org = args;
     wasm_module_inst_t module_inst = *(wasm_module_inst_t *)args++;
     char *exception = *(char **)args++;
     uint32 exception_size = *(uint32 *)args++;
     const char *exception1;
-
-    bh_assert(argc == 3);
 
     if (!runtime_inited) {
         args_org[0] = false;
@@ -438,14 +446,17 @@ handle_cmd_get_exception(uint64 *args, uint32 argc)
 static void
 handle_cmd_exec_app_main(uint64 *args, int32 argc)
 {
+    if (argc < 3)
+        return;
+
     wasm_module_inst_t module_inst = *(wasm_module_inst_t *)args++;
     uint32 app_argc = *(uint32 *)args++;
     char **app_argv = NULL;
     uint64 total_size;
     int32 i;
 
-    bh_assert(argc >= 3);
-    bh_assert(app_argc >= 1);
+    if (app_argc < 1)
+        return;
 
     if (!runtime_inited) {
         return;
@@ -643,7 +654,8 @@ static void
 handle_cmd_get_version(uint64 *args, uint32 argc)
 {
     uint32 major, minor, patch;
-    bh_assert(argc == 3);
+    if (argc != 3)
+        return;
 
     wasm_runtime_get_version(&major, &minor, &patch);
     args[0] = major;
@@ -655,10 +667,12 @@ handle_cmd_get_version(uint64 *args, uint32 argc)
 static void
 handle_cmd_get_pgo_prof_buf_size(uint64 *args, int32 argc)
 {
+    if (argc != 1)
+        return;
+
     wasm_module_inst_t module_inst = *(wasm_module_inst_t *)args;
     uint32 buf_len;
 
-    bh_assert(argc == 1);
 
     if (!runtime_inited) {
         args[0] = 0;
@@ -672,13 +686,14 @@ handle_cmd_get_pgo_prof_buf_size(uint64 *args, int32 argc)
 static void
 handle_cmd_get_pro_prof_buf_data(uint64 *args, int32 argc)
 {
+    if (argc != 3)
+        return;
+
     uint64 *args_org = args;
     wasm_module_inst_t module_inst = *(wasm_module_inst_t *)args++;
     char *buf = *(char **)args++;
     uint32 len = *(uint32 *)args++;
     uint32 bytes_dumped;
-
-    bh_assert(argc == 3);
 
     if (!runtime_inited) {
         args_org[0] = 0;
