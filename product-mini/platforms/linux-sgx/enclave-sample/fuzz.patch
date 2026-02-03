@@ -9,3 +9,25 @@ diff --git a/App/Enclave_u.c b/App/Enclave_u.c
  	uint8_t* cmd_buf = NULL;
  	unsigned int cmd_buf_size;
  	DFGetBytes(&cmd_buf_size, sizeof(unsigned int), "", FUZZ_SIZE);
+@@ -2164,14 +2165,17 @@
+ sgx_status_t fuzz_ecall_iwasm_main(void) {
+ 	uint8_t* wasm_file_buf = NULL;
+ 	wasm_file_buf = NULL;
+-	if (!DFEnableSetNull("")) {
+ 	size_t count_0_wasm_file_buf = DFGetUserCheckCount(sizeof(uint8_t), "");
+ 	wasm_file_buf = (uint8_t*)DFManagedCalloc(count_0_wasm_file_buf, sizeof(uint8_t));
+ 	DFGetBytes((void *)wasm_file_buf, count_0_wasm_file_buf * sizeof(uint8_t), "", FUZZ_DATA);
+-
++	if (count_0_wasm_file_buf >= 4) {
++		wasm_file_buf[0] = '\0';
++		wasm_file_buf[1] = 'a';
++		wasm_file_buf[2] = 's';
++		wasm_file_buf[3] = 'm';
+ 	}
+-	uint32_t wasm_file_size;
+-	DFGetBytes(&wasm_file_size, sizeof(uint32_t), "", FUZZ_DATA);
++
++	uint32_t wasm_file_size = count_0_wasm_file_buf;
+ 	sgx_status_t status = ecall_iwasm_main(__hidden_sgxfuzzer_harness_global_eid, wasm_file_buf, wasm_file_size);
+ 	return status;
+ }
