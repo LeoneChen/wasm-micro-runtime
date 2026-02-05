@@ -9,6 +9,7 @@ SGX_MODE ?= SIM
 SGX_ARCH ?= x64
 SGX_DEBUG ?= 0
 SPEC_TEST ?= 0
+ENCLAVE_FUZZ ?= 0
 
 # These variables are automatically set by CMakeLists.txt
 WAMR_BUILD_SGX_IPFS = 0
@@ -138,6 +139,15 @@ ifeq ($(WAMR_BUILD_LIB_RATS), 1)
 	Enclave_Include_Paths += -I$(LIB_RATS_INCLUDE_DIR) -I$(SGX_SSL)/include
 endif
 
+ifeq ($(ENCLAVE_FUZZ), 1)
+Enclave_C_Flags := $(SGX_COMMON_CFLAGS) -fvisibility=hidden \
+				   -fpie -fstack-protector $(Enclave_Include_Paths) \
+				   -DWASM_GLOBAL_HEAP_SIZE=$(WAMR_BUILD_GLOBAL_HEAP_SIZE) \
+				   -DWASM_ENABLE_GLOBAL_HEAP_POOL=$(WAMR_BUILD_GLOBAL_HEAP_POOL) \
+				   -DWASM_ENABLE_LIB_RATS=$(WAMR_BUILD_LIB_RATS) \
+				   -DWASM_ENABLE_STATIC_PGO=$(WAMR_BUILD_STATIC_PGO) \
+				   -DWASM_ENABLE_LIBC_WASI=$(WAMR_BUILD_LIBC_WASI)
+else
 Enclave_C_Flags := $(SGX_COMMON_CFLAGS) -nostdinc -fvisibility=hidden \
 				   -fpie -fstack-protector $(Enclave_Include_Paths) \
 				   -DWASM_GLOBAL_HEAP_SIZE=$(WAMR_BUILD_GLOBAL_HEAP_SIZE) \
@@ -145,6 +155,7 @@ Enclave_C_Flags := $(SGX_COMMON_CFLAGS) -nostdinc -fvisibility=hidden \
 				   -DWASM_ENABLE_LIB_RATS=$(WAMR_BUILD_LIB_RATS) \
 				   -DWASM_ENABLE_STATIC_PGO=$(WAMR_BUILD_STATIC_PGO) \
 				   -DWASM_ENABLE_LIBC_WASI=$(WAMR_BUILD_LIBC_WASI)
+endif
 ifeq ($(SPEC_TEST), 1)
 	Enclave_C_Flags += -DWASM_ENABLE_SPEC_TEST=1
 else
@@ -159,6 +170,15 @@ ifeq ($(WAMR_BUILD_LIB_RATS), 1)
 	Rats_Lib_NW_Link_libs := -lsgx_dcap_tvl -lsgx_tsgxssl_crypto
 endif
 
+ifeq ($(ENCLAVE_FUZZ), 1)
+Enclave_Cpp_Flags := $(Enclave_C_Flags) -std=c++11
+Enclave_Link_Flags := $(SGX_COMMON_CFLAGS) -L$(SGX_LIBRARY_PATH) ${Rats_Lib_Link_Dirs} \
+	-Wl,--whole-archive -lSGXSanRTEnclave -l$(Trts_Library_Name) ${Rats_Lib_W_Link_libs} $(Intel_Ipfs_Trusted_Flag) -Wl,--no-whole-archive \
+	-Wl,--start-group -lsgx_tstdc -lsgx_tcxx -lsgx_tkey_exchange -l$(Crypto_Library_Name) -l$(Service_Library_Name) $(Rats_Lib_NW_Link_libs) -Wl,--end-group \
+	-Wl,-Bsymbolic \
+	-Wl,-eenclave_entry -Wl,--export-dynamic  \
+	-Wl,--defsym,__ImageBase=0
+else
 Enclave_Cpp_Flags := $(Enclave_C_Flags) -std=c++11 -nostdinc++
 Enclave_Link_Flags := $(SGX_COMMON_CFLAGS) -Wl,--no-undefined -nostdlib -nodefaultlibs -nostartfiles -L$(SGX_LIBRARY_PATH) ${Rats_Lib_Link_Dirs} \
 	-Wl,--whole-archive -l$(Trts_Library_Name) ${Rats_Lib_W_Link_libs} $(Intel_Ipfs_Trusted_Flag) -Wl,--no-whole-archive \
@@ -166,6 +186,7 @@ Enclave_Link_Flags := $(SGX_COMMON_CFLAGS) -Wl,--no-undefined -nostdlib -nodefau
 	-Wl,-Bstatic -Wl,-Bsymbolic -Wl,--no-undefined \
 	-Wl,-pie,-eenclave_entry -Wl,--export-dynamic  \
 	-Wl,--defsym,__ImageBase=0
+endif
 
 Enclave_Edl_Search_Path     =   --search-path ../Enclave \
 								--search-path $(SGX_SDK)/include \
@@ -189,6 +210,30 @@ endif
 endif
 endif
 
+ifeq ($(ENCLAVE_FUZZ), 1)
+	App_Cpp_Flags += -DENCLAVE_FUZZ=1
+	App_Link_Flags += \
+		-ldl \
+		-Wl,-rpath=$(SGX_LIBRARY_PATH) \
+		-Wl,-whole-archive -lSGXSanRTApp -Wl,-no-whole-archive \
+		-lSGXFuzzerRT \
+		-lcrypto \
+		-lboost_program_options \
+		-rdynamic
+	Enclave_C_Flags += \
+		-DENCLAVE_FUZZ=1 \
+		-fno-discard-value-names \
+		-flegacy-pass-manager \
+		-Xclang -load -Xclang $(SGX_SDK)/lib64/libSGXSanPass.so \
+		-fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp
+	Enclave_Cpp_Flags += \
+		-DENCLAVE_FUZZ=1 \
+		-fno-discard-value-names \
+		-flegacy-pass-manager \
+		-Xclang -load -Xclang $(SGX_SDK)/lib64/libSGXSanPass.so \
+		-fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp
+	Enclave_Link_Flags += -shared
+endif
 
 .PHONY: all run
 
@@ -201,7 +246,12 @@ all: $(App_Name) $(Enclave_Name)
 	@echo "You can also sign the enclave using an external signing tool. See User's Guide for more details."
 	@echo "To build the project in simulation mode set SGX_MODE=SIM. To build the project in prerelease mode set SGX_PRERELEASE=1 and SGX_MODE=HW."
 else
+
+ifeq ($(ENCLAVE_FUZZ), 1)
+all: $(App_Name) $(Enclave_Name)
+else
 all: $(App_Name) $(Signed_Enclave_Name)
+endif
 endif
 
 run: all
@@ -218,7 +268,13 @@ ifeq ($(WAMR_BUILD_LIB_RATS), 1)
 endif
 
 App/Enclave_u.c: $(SGX_EDGER8R) Enclave/Enclave.edl librats
+ifeq ($(ENCLAVE_FUZZ), 1)
+	@cd App && $(SGX_EDGER8R) --untrusted ../Enclave/Enclave.edl $(Enclave_Edl_Search_Path) --gen-harness
+	@clang-format-13 -i $@
+	@cp Enclave_u.c $@
+else
 	@cd App && $(SGX_EDGER8R) --untrusted ../Enclave/Enclave.edl $(Enclave_Edl_Search_Path)
+endif
 	@echo "GEN  =>  $@"
 
 App/Enclave_u.o: App/Enclave_u.c
@@ -247,7 +303,7 @@ Enclave/Enclave_t.o: Enclave/Enclave_t.c
 	@$(CC) $(Enclave_C_Flags) -c $< -o $@
 	@echo "CC   <=  $<"
 
-Enclave/%.o: Enclave/%.cpp
+Enclave/%.o: Enclave/%.cpp Enclave/Enclave_t.c
 	@$(CXX) $(Enclave_Cpp_Flags) -c $< -o $@
 	@echo "CXX  <=  $<"
 
