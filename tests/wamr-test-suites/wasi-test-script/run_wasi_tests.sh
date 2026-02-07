@@ -23,13 +23,11 @@ else
     readonly PLATFORM=$(uname -s | tr A-Z a-z)
     readonly VENV_BIN_DIR=bin
     readonly PYTHON_EXE=python3
-    readonly IWASM_EXE="${WORK_DIR}/../../../../product-mini/platforms/${PLATFORM}/build/iwasm"
+    readonly IWASM_EXE="${WORK_DIR}/../../../../product-mini/platforms/linux-sgx/enclave-sample/iwasm"
 fi
 
 readonly WAMR_DIR="${WORK_DIR}/../../../.."
-readonly IWASM_CMD="${IWASM_EXE} \
-    --allow-resolve=google-public-dns-a.google.com \
-    --addr-pool=::1/128,127.0.0.1/32"
+readonly IWASM_CMD="${IWASM_EXE}"
 
 readonly IWASM_CMD_STRESS="${IWASM_CMD} --max-threads=12"
 readonly WAMRC_CMD="${WORK_DIR}/../../../../wamr-compiler/build/wamrc"
@@ -71,7 +69,7 @@ run_aot_tests () {
         test_aot="${test_wasm%.wasm}.aot"
         test_json="${test_wasm%.wasm}.json"
 
-        if [ -f ${test_wasm} ]; then
+        if [ -f ${test_json} ]; then
             expected=$(jq .exit_code ${test_json})
         fi
 
