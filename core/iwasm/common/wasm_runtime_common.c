@@ -1487,7 +1487,7 @@ wasm_runtime_load_ex(uint8 *buf, uint32 size, const LoadArgs *args,
     else if (package_type == Wasm_Module_AoT) {
 #if WASM_ENABLE_AOT != 0
         module_common = (WASMModuleCommon *)aot_load_from_aot_file(
-            buf, size, args, error_buf, error_buf_size);
+            buf, size, args, error_buf, error_buf_size, false);
         if (module_common)
             ((AOTModule *)module_common)->is_binary_freeable =
                 args->wasm_binary_freeable;
@@ -1725,6 +1725,9 @@ void
 wasm_runtime_deinstantiate_internal(WASMModuleInstanceCommon *module_inst,
                                     bool is_sub_inst)
 {
+    if (!module_inst)
+        return;
+
 #if WASM_ENABLE_INTERP != 0
     if (module_inst->module_type == Wasm_Module_Bytecode) {
         wasm_deinstantiate((WASMModuleInstance *)module_inst, is_sub_inst);
@@ -3196,6 +3199,9 @@ const char *
 wasm_runtime_get_exception(WASMModuleInstanceCommon *module_inst_comm)
 {
     WASMModuleInstance *module_inst = (WASMModuleInstance *)module_inst_comm;
+
+    if (!module_inst_comm)
+        return NULL;
 
     bh_assert(module_inst_comm->module_type == Wasm_Module_Bytecode
               || module_inst_comm->module_type == Wasm_Module_AoT);

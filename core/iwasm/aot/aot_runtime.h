@@ -504,7 +504,8 @@ typedef struct LLVMProfileData_64 {
  */
 AOTModule *
 aot_load_from_aot_file(const uint8 *buf, uint32 size, const LoadArgs *args,
-                       char *error_buf, uint32 error_buf_size);
+                       char *error_buf, uint32 error_buf_size,
+                       bool verify_magic_number);
 
 /**
  * Load a AOT module from a specified AOT section list.

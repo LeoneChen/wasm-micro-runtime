@@ -278,6 +278,9 @@ bool
 wasm_application_execute_main(WASMModuleInstanceCommon *module_inst, int32 argc,
                               char *argv[])
 {
+    if (!module_inst)
+        return false;
+
     bool ret;
 #if (WASM_ENABLE_MEMORY_PROFILING != 0)
     WASMExecEnv *exec_env;
@@ -906,6 +909,9 @@ bool
 wasm_application_execute_func(WASMModuleInstanceCommon *module_inst,
                               const char *name, int32 argc, char *argv[])
 {
+    if (!module_inst)
+        return false;
+
     bool ret;
 #if WASM_ENABLE_MEMORY_PROFILING != 0
     WASMExecEnv *exec_env;

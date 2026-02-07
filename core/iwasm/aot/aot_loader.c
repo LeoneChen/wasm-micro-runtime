@@ -721,7 +721,7 @@ load_name_section(const uint8 *buf, const uint8 *buf_end, AOTModule *module,
                   uint32 error_buf_size)
 {
 #if WASM_ENABLE_CUSTOM_NAME_SECTION != 0
-    const uint8 *p = buf, *p_end = buf_end;
+    const uint8 *p = buf, *p_end = buf_end, *p_sub_end;
     uint32 *aux_func_indexes;
     const char **aux_func_names;
     uint32 name_type, subsection_size;
@@ -769,10 +769,17 @@ load_name_section(const uint8 *buf, const uint8 *buf_end, AOTModule *module,
         previous_name_type = name_type;
         read_uint32(p, p_end, subsection_size);
         CHECK_BUF(p, p_end, subsection_size);
+        p_sub_end = p + subsection_size;
+
         switch (name_type) {
             case SUB_SECTION_TYPE_FUNC:
                 if (subsection_size) {
-                    read_uint32(p, p_end, num_func_name);
+                    read_uint32(p, p_sub_end, num_func_name);
+                    if (num_func_name > (uint64)(p_sub_end - p)) {
+                        set_error_buf(error_buf, error_buf_size,
+                                      "function name count out of bounds");
+                        return false;
+                    }
                     if (num_func_name
                         > module->import_func_count + module->func_count) {
                         set_error_buf(error_buf, error_buf_size,
@@ -796,7 +803,7 @@ load_name_section(const uint8 *buf, const uint8 *buf_end, AOTModule *module,
 
                     for (name_index = 0; name_index < num_func_name;
                          name_index++) {
-                        read_uint32(p, p_end, func_index);
+                        read_uint32(p, p_sub_end, func_index);
                         if (name_index != 0
                             && func_index == previous_func_index) {
                             set_error_buf(error_buf, error_buf_size,
@@ -817,13 +824,14 @@ load_name_section(const uint8 *buf, const uint8 *buf_end, AOTModule *module,
                         }
                         previous_func_index = func_index;
                         *(aux_func_indexes + name_index) = func_index;
-                        read_string(p, p_end, *(aux_func_names + name_index));
+                        read_string(p, p_sub_end, *(aux_func_names + name_index));
 #if 0
                         LOG_DEBUG("func_index %u -> aux_func_name = %s\n",
                                func_index, *(aux_func_names + name_index));
 #endif
                     }
                 }
+                p = p_sub_end;
                 break;
             case SUB_SECTION_TYPE_MODULE: /* TODO: Parse for module subsection
                                            */
@@ -886,6 +894,7 @@ load_string_literal_section(const uint8 *buf, const uint8 *buf_end,
 
     for (i = 0; i < string_count; i++) {
         module->string_literal_ptrs[i] = p;
+        CHECK_BUF(p, p_end, module->string_literal_lengths[i]);
         p += module->string_literal_lengths[i];
     }
 
@@ -4281,6 +4290,11 @@ resolve_execute_mode(const uint8 *buf, uint32 size, bool *p_mode,
             read_uint32(p, p_end, section_size);
             CHECK_BUF(p, p_end, section_size);
             if (section_type == AOT_SECTION_TYPE_TARGET_INFO) {
+                if (section_size < 6) {
+                    set_error_buf(error_buf, error_buf_size,
+                                  "invalid section size");
+                    goto fail;
+                }
                 p += 4;
                 read_uint16(p, p_end, e_type);
                 if (e_type == E_TYPE_XIP) {
@@ -4295,7 +4309,7 @@ resolve_execute_mode(const uint8 *buf, uint32 size, bool *p_mode,
         else { /* section_type > AOT_SECTION_TYPE_SIGNATURE */
             set_error_buf(error_buf, error_buf_size,
                           "resolve execute mode failed");
-            break;
+            goto fail;
         }
         p += section_size;
     }
@@ -4335,6 +4349,17 @@ create_sections(AOTModule *module, const uint8 *buf, uint32 size,
             || section_type == AOT_SECTION_TYPE_CUSTOM) {
             read_uint32(p, p_end, section_size);
             CHECK_BUF(p, p_end, section_size);
+
+            if (section_type == AOT_SECTION_TYPE_TARGET_INFO
+                && section_size > 65536) {
+                set_error_buf(error_buf, error_buf_size, "invalid section size");
+                goto fail;
+            }
+
+            if ((uintptr_t)p + section_size < (uintptr_t)p
+                || (uintptr_t)p + section_size > (uintptr_t)p_end) {
+                goto fail;
+            }
 
             if (!(section = loader_malloc(sizeof(AOTSection), error_buf,
                                           error_buf_size))) {
@@ -4421,7 +4446,7 @@ aot_compatible_version(uint32 version)
 static bool
 load(const uint8 *buf, uint32 size, AOTModule *module,
      bool wasm_binary_freeable, bool no_resolve, char *error_buf,
-     uint32 error_buf_size)
+     uint32 error_buf_size, bool verify_magic_number)
 {
     const uint8 *buf_end = buf + size;
     const uint8 *p = buf, *p_end = buf_end;
@@ -4429,10 +4454,15 @@ load(const uint8 *buf, uint32 size, AOTModule *module,
     AOTSection *section_list = NULL;
     bool ret;
 
-    read_uint32(p, p_end, magic_number);
-    if (magic_number != AOT_MAGIC_NUMBER) {
-        set_error_buf(error_buf, error_buf_size, "magic header not detected");
-        return false;
+    if (verify_magic_number) {
+        read_uint32(p, p_end, magic_number);
+        if (magic_number != AOT_MAGIC_NUMBER) {
+            set_error_buf(error_buf, error_buf_size, "magic header not detected");
+            return false;
+        }
+    }
+    else {
+        p += sizeof(uint32);
     }
 
     read_uint32(p, p_end, version);
@@ -4488,7 +4518,8 @@ fail:
 
 AOTModule *
 aot_load_from_aot_file(const uint8 *buf, uint32 size, const LoadArgs *args,
-                       char *error_buf, uint32 error_buf_size)
+                       char *error_buf, uint32 error_buf_size,
+                       bool verify_magic_number)
 {
     AOTModule *module = create_module(args->name, error_buf, error_buf_size);
 
@@ -4497,7 +4528,7 @@ aot_load_from_aot_file(const uint8 *buf, uint32 size, const LoadArgs *args,
 
     os_thread_jit_write_protect_np(false); /* Make memory writable */
     if (!load(buf, size, module, args->wasm_binary_freeable, args->no_resolve,
-              error_buf, error_buf_size)) {
+              error_buf, error_buf_size, verify_magic_number)) {
         aot_unload(module);
         return NULL;
     }

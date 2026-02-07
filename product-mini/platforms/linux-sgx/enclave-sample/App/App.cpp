@@ -532,9 +532,9 @@ app_instance_func(void *wasm_module_inst, const char *func_name, int app_argc,
     uint64_t ecall_args_buf[16], *ecall_args = ecall_args_buf;
     int i, size;
 
-    if (app_argc + 3 > sizeof(ecall_args_buf) / sizeof(uint64_t)) {
+    if (app_argc + 4 > sizeof(ecall_args_buf) / sizeof(uint64_t)) {
         if (!(ecall_args =
-                  (uint64_t *)malloc(sizeof(uint64_t) * (app_argc + 3)))) {
+                  (uint64_t *)malloc(sizeof(uint64_t) * (app_argc + 4)))) {
             printf("Allocate memory failed.\n");
             return;
         }
@@ -542,12 +542,13 @@ app_instance_func(void *wasm_module_inst, const char *func_name, int app_argc,
 
     ecall_args[0] = (uintptr_t)wasm_module_inst;
     ecall_args[1] = (uintptr_t)func_name;
-    ecall_args[2] = (uintptr_t)app_argc;
+    ecall_args[2] = (uintptr_t)strlen(func_name);
+    ecall_args[3] = (uintptr_t)app_argc;
     for (i = 0; i < app_argc; i++) {
-        ecall_args[i + 3] = (uintptr_t)app_argv[i];
+        ecall_args[i + 4] = (uintptr_t)app_argv[i];
     }
 
-    size = (uint32_t)sizeof(uint64_t) * (app_argc + 3);
+    size = (uint32_t)sizeof(uint64_t) * (app_argc + 4);
     if (SGX_SUCCESS
         != ecall_handle_command(g_eid, CMD_EXEC_APP_FUNC, (uint8_t *)ecall_args,
                                 size)) {
