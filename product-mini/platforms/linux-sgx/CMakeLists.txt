@@ -98,6 +98,7 @@ set (WAMR_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../..)
 
 include (${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 add_library(vmlib ${WAMR_RUNTIME_LIB_SOURCE})
+set_source_files_properties(${WAMR_RUNTIME_LIB_SOURCE} PROPERTIES COMPILE_FLAGS "-fno-discard-value-names -flegacy-pass-manager -Xclang -load -Xclang ${SGX_SDK_DIR}/lib64/libSGXSanPass.so -fsanitize-coverage=inline-8bit-counters,pc-table")
 
 add_custom_command (
              OUTPUT libvmlib_untrusted.a

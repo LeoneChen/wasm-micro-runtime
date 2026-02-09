@@ -151,7 +151,7 @@ endif
 
 Enclave_Cpp_Flags := $(Enclave_C_Flags) -std=c++11 -nostdinc++
 Enclave_Link_Flags := $(SGX_COMMON_CFLAGS) -Wl,--no-undefined -nostdlib -nodefaultlibs -nostartfiles -L$(SGX_LIBRARY_PATH) ${Rats_Lib_Link_Dirs} \
-	-Wl,--whole-archive -l$(Trts_Library_Name) ${Rats_Lib_W_Link_libs} $(Intel_Ipfs_Trusted_Flag) -Wl,--no-whole-archive \
+	-Wl,--whole-archive -lSGXSanRTEnclave -l$(Trts_Library_Name) ${Rats_Lib_W_Link_libs} $(Intel_Ipfs_Trusted_Flag) -Wl,--no-whole-archive \
 	-Wl,--start-group -lsgx_tstdc -lsgx_tcxx -lsgx_pthread -lsgx_tkey_exchange -l$(Crypto_Library_Name) -l$(Service_Library_Name) $(Rats_Lib_NW_Link_libs) -Wl,--end-group \
 	-Wl,-Bstatic -Wl,-Bsymbolic -Wl,--no-undefined \
 	-Wl,-pie,-eenclave_entry -Wl,--export-dynamic  \
@@ -179,6 +179,25 @@ endif
 endif
 endif
 
+App_Link_Flags += \
+	-ldl \
+	-Wl,-rpath=$(SGX_LIBRARY_PATH) \
+	-Wl,-whole-archive -lSGXSanRTApp -Wl,-no-whole-archive \
+	-lSGXFuzzerRT \
+	-lcrypto \
+	-lboost_program_options \
+	-lsgx_enclave_common \
+	-rdynamic
+Enclave_C_Flags += \
+	-fno-discard-value-names \
+	-flegacy-pass-manager \
+	-Xclang -load -Xclang $(SGX_SDK)/lib64/libSGXSanPass.so \
+	-fsanitize-coverage=inline-8bit-counters,pc-table
+Enclave_Cpp_Flags += \
+	-fno-discard-value-names \
+	-flegacy-pass-manager \
+	-Xclang -load -Xclang $(SGX_SDK)/lib64/libSGXSanPass.so \
+	-fsanitize-coverage=inline-8bit-counters,pc-table
 
 .PHONY: all run
 
@@ -208,7 +227,9 @@ ifeq ($(WAMR_BUILD_LIB_RATS), 1)
 endif
 
 App/Enclave_u.c: $(SGX_EDGER8R) Enclave/Enclave.edl librats
-	@cd App && $(SGX_EDGER8R) --untrusted ../Enclave/Enclave.edl $(Enclave_Edl_Search_Path)
+	@cd App && $(SGX_EDGER8R) --untrusted ../Enclave/Enclave.edl $(Enclave_Edl_Search_Path) --gen-harness
+	@clang-format-13 -i $@
+	@cp Enclave_u.c $@
 	@echo "GEN  =>  $@"
 
 App/Enclave_u.o: App/Enclave_u.c
@@ -237,7 +258,7 @@ Enclave/Enclave_t.o: Enclave/Enclave_t.c
 	@$(CC) $(Enclave_C_Flags) -c $< -o $@
 	@echo "CC   <=  $<"
 
-Enclave/%.o: Enclave/%.cpp
+Enclave/%.o: Enclave/%.cpp Enclave/Enclave_t.c
 	@$(CXX) $(Enclave_Cpp_Flags) -c $< -o $@
 	@echo "CXX  <=  $<"
 
