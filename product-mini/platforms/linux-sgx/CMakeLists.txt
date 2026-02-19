@@ -104,15 +104,25 @@ if (NOT DEFINED WAMR_BUILD_REF_TYPES)
 endif ()
 
 set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -Wl,--gc-sections")
+if (ENCLAVE_FUZZ)
+set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu11 -ffunction-sections -fdata-sections \
+                                     -Wall -Wno-unused-parameter -Wno-pedantic \
+                                     -fvisibility=hidden -fpie" )
+set (BUILD_UNTRUST_PART 1)
+else()
 set (CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -std=gnu11 -ffunction-sections -fdata-sections \
                                      -Wall -Wno-unused-parameter -Wno-pedantic \
                                      -nostdinc -fvisibility=hidden -fpie" )
+endif()
 
 set (WAMR_ROOT_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../..)
 
 include (${WAMR_ROOT_DIR}/build-scripts/runtime_lib.cmake)
 add_library(vmlib ${WAMR_RUNTIME_LIB_SOURCE})
 set_version_info (vmlib)
+if (ENCLAVE_FUZZ)
+  set_target_properties(vmlib PROPERTIES COMPILE_FLAGS "-Wno-unused-command-line-argument -fno-discard-value-names -flegacy-pass-manager -Xclang -load -Xclang ${SGX_SDK_DIR}/lib64/libSGXSanPass.so -fsanitize-coverage=inline-8bit-counters,pc-table,trace-cmp -DENCLAVE_FUZZ=1")
+endif()
 
 add_custom_command (
              OUTPUT libvmlib_untrusted.a
