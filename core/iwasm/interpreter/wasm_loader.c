@@ -6892,18 +6892,14 @@ load(const uint8 *buf, uint32 size, WASMModule *module,
 {
     const uint8 *buf_end = buf + size;
     const uint8 *p = buf, *p_end = buf_end;
-    uint32 magic_number, version;
+    uint32 version;
     WASMSection *section_list = NULL;
 
     CHECK_BUF1(p, p_end, sizeof(uint32));
-    magic_number = read_uint32(p);
-    if (!is_little_endian())
-        exchange32((uint8 *)&magic_number);
-
-    if (magic_number != WASM_MAGIC_NUMBER) {
-        set_error_buf(error_buf, error_buf_size, "magic header not detected");
-        return false;
-    }
+    /* Skip the magic number bytes - already validated by the caller
+       (wasm_runtime_load_ex via get_package_type) to avoid double-fetch
+       of untrusted host memory (TOCTOU vulnerability). */
+    p += sizeof(uint32);
 
     CHECK_BUF1(p, p_end, sizeof(uint32));
     version = read_uint32(p);
@@ -10712,9 +10708,12 @@ check_memory_align_equal(uint8 opcode, uint32 align, char *error_buf,
     };
     uint8 expect;
 
-    bh_assert((opcode <= WASM_OP_ATOMIC_WAIT64)
-              || (opcode >= WASM_OP_ATOMIC_I32_LOAD
-                  && opcode <= WASM_OP_ATOMIC_RMW_I64_CMPXCHG32_U));
+    if (!((opcode <= WASM_OP_ATOMIC_WAIT64)
+          || (opcode >= WASM_OP_ATOMIC_I32_LOAD
+              && opcode <= WASM_OP_ATOMIC_RMW_I64_CMPXCHG32_U))) {
+        set_error_buf(error_buf, error_buf_size, "invalid atomic opcode");
+        return false;
+    }
     if (opcode <= WASM_OP_ATOMIC_WAIT64) {
         expect = wait_notify_aligns[opcode - WASM_OP_ATOMIC_NOTIFY];
     }

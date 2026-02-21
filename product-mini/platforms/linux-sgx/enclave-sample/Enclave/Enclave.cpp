@@ -7,8 +7,12 @@
 #include <string.h>
 #include <inttypes.h>
 #include <stdbool.h>
+#ifdef ENCLAVE_FUZZ
+#include <sys/mman.h>
+#endif
 
 #include "Enclave_t.h"
+#include "sgx_trts.h"
 #include "wasm_export.h"
 #include "bh_platform.h"
 
@@ -94,6 +98,14 @@ set_error_buf(char *error_buf, uint32 error_buf_size, const char *string)
 
 static bool runtime_inited = false;
 
+/* Enclave-side storage for valid module instance pointer.
+   Used to validate module_inst received from untrusted host. */
+static wasm_module_inst_t enclave_module_inst = NULL;
+
+/* Enclave-side storage for valid enclave module pointer.
+   Used to validate enclave_module received from untrusted host. */
+static EnclaveModule *enclave_module_ptr = NULL;
+
 static void
 handle_cmd_init_runtime(uint64 *args, uint32 argc)
 {
@@ -101,6 +113,9 @@ handle_cmd_init_runtime(uint64 *args, uint32 argc)
     RuntimeInitArgs init_args;
 
     bh_assert(argc == 1);
+
+    if (argc < 1)
+        return;
 
     /* avoid duplicated init */
     if (runtime_inited) {
@@ -218,27 +233,75 @@ static void
 handle_cmd_load_module(uint64 *args, uint32 argc)
 {
     uint64 *args_org = args;
-    char *wasm_file = *(char **)args++;
-    uint32 wasm_file_size = *(uint32 *)args++;
-    char *error_buf = *(char **)args++;
-    uint32 error_buf_size = *(uint32 *)args++;
-    uint64 total_size = sizeof(EnclaveModule) + (uint64)wasm_file_size;
+    char *wasm_file;
+    uint32 wasm_file_size;
+    char *error_buf;
+    uint32 error_buf_size;
+    uint64 total_size;
     EnclaveModule *enclave_module;
 
     bh_assert(argc == 4);
 
-    if (!runtime_inited) {
+    if (argc != 4 || !runtime_inited) {
+        if (argc > 0)
+            *(void **)args_org = NULL;
+        return;
+    }
+
+    wasm_file = *(char **)args++;
+    wasm_file_size = *(uint32 *)args++;
+    error_buf = *(char **)args++;
+    error_buf_size = *(uint32 *)args++;
+
+    if (!wasm_file || wasm_file_size == 0
+        || (uintptr_t)wasm_file + wasm_file_size < (uintptr_t)wasm_file
+        || !sgx_is_outside_enclave(wasm_file, wasm_file_size)) {
         *(void **)args_org = NULL;
         return;
     }
 
-    if (!is_xip_file((uint8 *)wasm_file, wasm_file_size)) {
+
+#ifdef ENCLAVE_FUZZ
+    /* Validate that host memory is actually mapped before accessing it.
+       mincore() returns ENOMEM for unmapped pages without triggering SIGSEGV.
+       In real SGX, page faults in host memory are handled by the CPU via AEX. */
+    {
+        unsigned char vec;
+        uintptr_t first_page = (uintptr_t)wasm_file & ~(uintptr_t)0xFFF;
+        uintptr_t last_page = ((uintptr_t)wasm_file + wasm_file_size - 1)
+                              & ~(uintptr_t)0xFFF;
+        uintptr_t page;
+        for (page = first_page; page <= last_page; page += 4096) {
+            if (mincore((void *)page, 4096, &vec) != 0) {
+                *(void **)args_org = NULL;
+                return;
+            }
+        }
+    }
+#endif
+
+    total_size = sizeof(EnclaveModule) + (uint64)wasm_file_size;
+
+    /* Copy untrusted wasm_file into enclave memory first to prevent
+       double fetch (TOCTOU) between is_xip_file check and bh_memcpy_s */
+    uint8 *wasm_file_local = (uint8 *)wasm_runtime_malloc(wasm_file_size);
+    if (!wasm_file_local) {
+        set_error_buf(error_buf, error_buf_size,
+                      "WASM module load failed: "
+                      "allocate memory failed.");
+        *(void **)args_org = NULL;
+        return;
+    }
+    bh_memcpy_s(wasm_file_local, wasm_file_size, wasm_file, wasm_file_size);
+
+    if (!is_xip_file((const uint8 *)wasm_file_local, wasm_file_size)) {
         if (total_size >= UINT32_MAX
             || !(enclave_module = (EnclaveModule *)wasm_runtime_malloc(
                      (uint32)total_size))) {
             set_error_buf(error_buf, error_buf_size,
                           "WASM module load failed: "
                           "allocate memory failed.");
+            wasm_runtime_free(wasm_file_local);
             *(void **)args_org = NULL;
             return;
         }
@@ -254,6 +317,7 @@ handle_cmd_load_module(uint64 *args, uint32 argc)
                      os_get_invalid_handle()))) {
             set_error_buf(error_buf, error_buf_size,
                           "WASM module load failed: mmap memory failed.");
+            wasm_runtime_free(wasm_file_local);
             *(void **)args_org = NULL;
             return;
         }
@@ -263,8 +327,9 @@ handle_cmd_load_module(uint64 *args, uint32 argc)
     }
 
     enclave_module->wasm_file = (uint8 *)enclave_module + sizeof(EnclaveModule);
-    bh_memcpy_s(enclave_module->wasm_file, wasm_file_size, wasm_file,
+    bh_memcpy_s(enclave_module->wasm_file, wasm_file_size, wasm_file_local,
                 wasm_file_size);
+    wasm_runtime_free(wasm_file_local);
 
     if (!(enclave_module->module =
               wasm_runtime_load(enclave_module->wasm_file, wasm_file_size,
@@ -278,6 +343,7 @@ handle_cmd_load_module(uint64 *args, uint32 argc)
     }
 
     *(EnclaveModule **)args_org = enclave_module;
+    enclave_module_ptr = enclave_module;
 
 #if WASM_ENABLE_LIB_RATS != 0
     /* Calculate the module hash */
@@ -299,11 +365,17 @@ handle_cmd_load_module(uint64 *args, uint32 argc)
 static void
 handle_cmd_unload_module(uint64 *args, uint32 argc)
 {
-    EnclaveModule *enclave_module = *(EnclaveModule **)args++;
+    EnclaveModule *enclave_module;
 
     bh_assert(argc == 1);
 
-    if (!runtime_inited) {
+    if (argc != 1 || !runtime_inited) {
+        return;
+    }
+
+    enclave_module = *(EnclaveModule **)args++;
+
+    if (!enclave_module || enclave_module != enclave_module_ptr) {
         return;
     }
 
@@ -338,6 +410,8 @@ handle_cmd_unload_module(uint64 *args, uint32 argc)
     else
         os_munmap(enclave_module, enclave_module->total_size_mapped);
 
+    enclave_module_ptr = NULL;
+
     LOG_VERBOSE("Unload module success.\n");
 }
 
@@ -368,16 +442,26 @@ static void
 handle_cmd_instantiate_module(uint64 *args, uint32 argc)
 {
     uint64 *args_org = args;
-    EnclaveModule *enclave_module = *(EnclaveModule **)args++;
-    uint32 stack_size = *(uint32 *)args++;
-    uint32 heap_size = *(uint32 *)args++;
-    char *error_buf = *(char **)args++;
-    uint32 error_buf_size = *(uint32 *)args++;
+    EnclaveModule *enclave_module;
+    uint32 stack_size, heap_size, error_buf_size;
+    char *error_buf;
     wasm_module_inst_t module_inst;
 
     bh_assert(argc == 5);
 
-    if (!runtime_inited) {
+    if (argc != 5 || !runtime_inited) {
+        if (argc > 0)
+            *(void **)args_org = NULL;
+        return;
+    }
+
+    enclave_module = *(EnclaveModule **)args++;
+    stack_size = *(uint32 *)args++;
+    heap_size = *(uint32 *)args++;
+    error_buf = *(char **)args++;
+    error_buf_size = *(uint32 *)args++;
+
+    if (!enclave_module || enclave_module != enclave_module_ptr) {
         *(void **)args_org = NULL;
         return;
     }
@@ -389,6 +473,7 @@ handle_cmd_instantiate_module(uint64 *args, uint32 argc)
         return;
     }
 
+    enclave_module_inst = module_inst;
     *(wasm_module_inst_t *)args_org = module_inst;
 
     LOG_VERBOSE("Instantiate module success.\n");
@@ -397,15 +482,22 @@ handle_cmd_instantiate_module(uint64 *args, uint32 argc)
 static void
 handle_cmd_deinstantiate_module(uint64 *args, uint32 argc)
 {
-    wasm_module_inst_t module_inst = *(wasm_module_inst_t *)args++;
+    wasm_module_inst_t module_inst;
 
     bh_assert(argc == 1);
 
-    if (!runtime_inited) {
+    if (argc != 1 || !runtime_inited) {
+        return;
+    }
+
+    module_inst = *(wasm_module_inst_t *)args++;
+
+    if (!module_inst || module_inst != enclave_module_inst) {
         return;
     }
 
     wasm_runtime_deinstantiate(module_inst);
+    enclave_module_inst = NULL;
 
     LOG_VERBOSE("Deinstantiate module success.\n");
 }
@@ -414,14 +506,21 @@ static void
 handle_cmd_get_exception(uint64 *args, uint32 argc)
 {
     uint64 *args_org = args;
-    wasm_module_inst_t module_inst = *(wasm_module_inst_t *)args++;
-    char *exception = *(char **)args++;
-    uint32 exception_size = *(uint32 *)args++;
+    wasm_module_inst_t module_inst;
+    char *exception;
+    uint32 exception_size;
     const char *exception1;
 
     bh_assert(argc == 3);
 
-    if (!runtime_inited) {
+    if (argc != 3)
+        return;
+
+    module_inst = *(wasm_module_inst_t *)args++;
+    exception = *(char **)args++;
+    exception_size = *(uint32 *)args++;
+
+    if (!runtime_inited || !module_inst || module_inst != enclave_module_inst) {
         args_org[0] = false;
         return;
     }
@@ -438,16 +537,28 @@ handle_cmd_get_exception(uint64 *args, uint32 argc)
 static void
 handle_cmd_exec_app_main(uint64 *args, int32 argc)
 {
-    wasm_module_inst_t module_inst = *(wasm_module_inst_t *)args++;
-    uint32 app_argc = *(uint32 *)args++;
+    wasm_module_inst_t module_inst;
+    uint32 app_argc;
     char **app_argv = NULL;
     uint64 total_size;
     int32 i;
 
     bh_assert(argc >= 3);
+
+    if (argc < 3 || !runtime_inited) {
+        return;
+    }
+
+    module_inst = *(wasm_module_inst_t *)args++;
+    app_argc = *(uint32 *)args++;
+
+    if (!module_inst || module_inst != enclave_module_inst) {
+        return;
+    }
+
     bh_assert(app_argc >= 1);
 
-    if (!runtime_inited) {
+    if (app_argc < 1 || argc < (int32)(app_argc + 2)) {
         return;
     }
 
@@ -471,16 +582,30 @@ handle_cmd_exec_app_main(uint64 *args, int32 argc)
 static void
 handle_cmd_exec_app_func(uint64 *args, int32 argc)
 {
-    wasm_module_inst_t module_inst = *(wasm_module_inst_t *)args++;
-    char *func_name = *(char **)args++;
-    uint32 app_argc = *(uint32 *)args++;
+    wasm_module_inst_t module_inst;
+    char *func_name;
+    uint32 app_argc;
     char **app_argv = NULL;
     uint64 total_size;
-    int32 i, func_name_len = strlen(func_name);
+    int32 i, func_name_len;
 
-    bh_assert(argc == app_argc + 3);
+    bh_assert(argc >= 3);
 
-    if (!runtime_inited) {
+    if (argc < 3 || !runtime_inited) {
+        return;
+    }
+
+    module_inst = *(wasm_module_inst_t *)args++;
+
+    if (!module_inst || module_inst != enclave_module_inst) {
+        return;
+    }
+
+    func_name = *(char **)args++;
+    app_argc = *(uint32 *)args++;
+    func_name_len = strlen(func_name);
+
+    if (argc < (int32)(app_argc + 3)) {
         return;
     }
 
@@ -504,6 +629,10 @@ handle_cmd_exec_app_func(uint64 *args, int32 argc)
 static void
 handle_cmd_set_log_level(uint64 *args, uint32 argc)
 {
+    if (argc < 1) {
+        LOG_ERROR("Invalid argc for set_log_level\n");
+        return;
+    }
 #if WASM_ENABLE_LOG != 0
     LOG_VERBOSE("Set log verbose level to %d.\n", (int)args[0]);
     bh_log_set_verbose_level((int)args[0]);
@@ -515,28 +644,46 @@ static void
 handle_cmd_set_wasi_args(uint64 *args, int32 argc)
 {
     uint64 *args_org = args;
-    EnclaveModule *enclave_module = *(EnclaveModule **)args++;
-    char **dir_list = *(char ***)args++;
-    uint32 dir_list_size = *(uint32 *)args++;
-    char **env_list = *(char ***)args++;
-    uint32 env_list_size = *(uint32 *)args++;
-    int stdinfd = *(int *)args++;
-    int stdoutfd = *(int *)args++;
-    int stderrfd = *(int *)args++;
-    char **wasi_argv = *(char ***)args++;
+    EnclaveModule *enclave_module;
+    char **dir_list;
+    uint32 dir_list_size;
+    char **env_list;
+    uint32 env_list_size;
+    int stdinfd, stdoutfd, stderrfd;
+    char **wasi_argv;
     char *p, *p1;
-    uint32 wasi_argc = *(uint32 *)args++;
-    char **addr_pool_list = *(char ***)args++;
-    uint32 addr_pool_list_size = *(uint32 *)args++;
+    uint32 wasi_argc;
+    char **addr_pool_list;
+    uint32 addr_pool_list_size;
     uint64 total_size = 0;
     int32 i, str_len;
 
-    bh_assert(argc == 10);
+    bh_assert(argc == 12);
 
-    if (!runtime_inited) {
+    if (argc != 12 || !runtime_inited) {
+        if (argc > 0)
+            *args_org = false;
+        return;
+    }
+
+    enclave_module = *(EnclaveModule **)args++;
+
+    if (!enclave_module || enclave_module != enclave_module_ptr) {
         *args_org = false;
         return;
     }
+
+    dir_list = *(char ***)args++;
+    dir_list_size = *(uint32 *)args++;
+    env_list = *(char ***)args++;
+    env_list_size = *(uint32 *)args++;
+    stdinfd = *(int *)args++;
+    stdoutfd = *(int *)args++;
+    stderrfd = *(int *)args++;
+    wasi_argv = *(char ***)args++;
+    wasi_argc = *(uint32 *)args++;
+    addr_pool_list = *(char ***)args++;
+    addr_pool_list_size = *(uint32 *)args++;
 
     total_size += sizeof(char *) * (uint64)dir_list_size
                   + sizeof(char *) * (uint64)env_list_size
@@ -645,6 +792,9 @@ handle_cmd_get_version(uint64 *args, uint32 argc)
     uint32 major, minor, patch;
     bh_assert(argc == 3);
 
+    if (argc < 3)
+        return;
+
     wasm_runtime_get_version(&major, &minor, &patch);
     args[0] = major;
     args[1] = minor;
@@ -697,6 +847,10 @@ ecall_handle_command(unsigned cmd, unsigned char *cmd_buf,
 {
     uint64 *args = (uint64 *)cmd_buf;
     uint32 argc = cmd_buf_size / sizeof(uint64);
+
+    /* Reject invalid input: NULL buffer with non-zero size from untrusted host */
+    if (cmd_buf == NULL && cmd_buf_size != 0)
+        return;
 
     switch (cmd) {
         case CMD_INIT_RUNTIME:
@@ -763,11 +917,34 @@ ecall_iwasm_main(uint8_t *wasm_file_buf, uint32_t wasm_file_size)
     RuntimeInitArgs init_args;
     char error_buf[128];
     const char *exception;
+    uint8_t *wasm_file_copy = NULL;
 
     /* avoid duplicated init */
     if (runtime_inited) {
         return;
     }
+
+    /* Validate untrusted input from host */
+    if (!wasm_file_buf || wasm_file_size == 0
+        || (uintptr_t)wasm_file_buf + wasm_file_size < (uintptr_t)wasm_file_buf
+        || !sgx_is_outside_enclave(wasm_file_buf, wasm_file_size)) {
+        return;
+    }
+
+#ifdef ENCLAVE_FUZZ
+    {
+        unsigned char vec;
+        uintptr_t first_page = (uintptr_t)wasm_file_buf & ~(uintptr_t)0xFFF;
+        uintptr_t last_page = ((uintptr_t)wasm_file_buf + wasm_file_size - 1)
+                              & ~(uintptr_t)0xFFF;
+        uintptr_t page;
+        for (page = first_page; page <= last_page; page += 4096) {
+            if (mincore((void *)page, 4096, &vec) != 0) {
+                return;
+            }
+        }
+    }
+#endif
 
     os_set_print_function(enclave_print);
 
@@ -788,12 +965,26 @@ ecall_iwasm_main(uint8_t *wasm_file_buf, uint32_t wasm_file_size)
         return;
     }
 
+    /* Copy wasm file from untrusted memory into enclave memory */
+    wasm_file_copy = (uint8_t *)wasm_runtime_malloc(wasm_file_size);
+    if (!wasm_file_copy) {
+        enclave_print("Allocate memory for wasm file failed.\n");
+        goto fail1;
+    }
+    /* Re-validate: enclave allocation above may have changed the memory
+       layout, so verify the source is still entirely outside enclave */
+    if (!sgx_is_outside_enclave(wasm_file_buf, wasm_file_size)) {
+        goto fail0;
+    }
+    bh_memmove_s(wasm_file_copy, wasm_file_size, wasm_file_buf,
+                 wasm_file_size);
+
     /* load WASM module */
-    if (!(wasm_module = wasm_runtime_load(wasm_file_buf, wasm_file_size,
+    if (!(wasm_module = wasm_runtime_load(wasm_file_copy, wasm_file_size,
                                           error_buf, sizeof(error_buf)))) {
         enclave_print(error_buf);
         enclave_print("\n");
-        goto fail1;
+        goto fail0;
     }
 
     /* instantiate the module */
@@ -818,6 +1009,9 @@ ecall_iwasm_main(uint8_t *wasm_file_buf, uint32_t wasm_file_size)
 fail2:
     /* unload the module */
     wasm_runtime_unload(wasm_module);
+
+fail0:
+    wasm_runtime_free(wasm_file_copy);
 
 fail1:
     /* destroy runtime environment */

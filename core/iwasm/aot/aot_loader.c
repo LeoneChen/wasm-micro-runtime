@@ -4425,15 +4425,13 @@ load(const uint8 *buf, uint32 size, AOTModule *module,
 {
     const uint8 *buf_end = buf + size;
     const uint8 *p = buf, *p_end = buf_end;
-    uint32 magic_number, version;
+    uint32 version;
     AOTSection *section_list = NULL;
     bool ret;
 
-    read_uint32(p, p_end, magic_number);
-    if (magic_number != AOT_MAGIC_NUMBER) {
-        set_error_buf(error_buf, error_buf_size, "magic header not detected");
-        return false;
-    }
+    /* Skip magic number - already verified by get_package_type() in caller.
+       Avoids re-reading untrusted memory (double fetch / TOCTOU). */
+    p += sizeof(uint32);
 
     read_uint32(p, p_end, version);
     if (!aot_compatible_version(version)) {

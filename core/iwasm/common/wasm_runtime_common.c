@@ -1448,13 +1448,20 @@ wasm_runtime_load_ex(uint8 *buf, uint32 size, const LoadArgs *args,
         return NULL;
     }
 
-    if (size < 4) {
+    if (!buf || size < 4) {
         set_error_buf(error_buf, error_buf_size,
                       "WASM module load failed: unexpected end");
         return NULL;
     }
 
-    package_type = get_package_type(buf, size);
+    /* Copy the first 4 bytes (magic header) into a trusted local variable
+       to prevent double-fetch (TOCTOU) from untrusted host memory.
+       The load() function will skip re-reading these bytes. */
+    {
+        uint8 header[4];
+        bh_memcpy_s(header, sizeof(header), buf, sizeof(header));
+        package_type = get_package_type(header, 4);
+    }
     if (package_type == Wasm_Module_Bytecode) {
 #if WASM_ENABLE_INTERP != 0
         magic_header_detected = true;

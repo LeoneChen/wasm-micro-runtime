@@ -1553,6 +1553,9 @@ wasm_enlarge_memory_internal(WASMModuleInstanceCommon *module,
 
 #ifdef OS_ENABLE_HW_BOUND_CHECK
     full_size_mmaped = true;
+#elif defined(BH_PLATFORM_LINUX_SGX)
+    /* On SGX, full size is pre-allocated to avoid remapping (double-fetch) */
+    full_size_mmaped = true;
 #elif WASM_ENABLE_SHARED_MEMORY != 0
     full_size_mmaped = shared_memory_is_shared(memory);
 #else
@@ -1653,14 +1656,6 @@ wasm_enlarge_memory_internal(WASMModuleInstanceCommon *module,
         }
     }
     else {
-        if (heap_size > 0) {
-            if (mem_allocator_is_heap_corrupted(memory->heap_handle)) {
-                wasm_runtime_show_app_heap_corrupted_prompt();
-                ret = false;
-                goto return_func;
-            }
-        }
-
         if (!(memory_data_new =
                   wasm_mremap_linear_memory(memory_data_old, total_size_old,
                                             total_size_new, total_size_new))) {
@@ -1687,6 +1682,15 @@ wasm_enlarge_memory_internal(WASMModuleInstanceCommon *module,
         /* write base addr of linear memory to GS segment register */
         os_writegsbase(memory_data_new);
 #endif
+
+        /* Check heap corruption after copying data to new memory,
+           to avoid double-fetch from untrusted memory (SGX) */
+        if (heap_size > 0) {
+            if (mem_allocator_is_heap_corrupted(memory->heap_handle)) {
+                wasm_runtime_show_app_heap_corrupted_prompt();
+                ret = false;
+            }
+        }
     }
 #endif /* end of WASM_MEM_ALLOC_WITH_USAGE */
 
@@ -1954,9 +1958,18 @@ wasm_allocate_linear_memory(uint8 **data, bool is_shared_memory,
     }
     else
 #endif
+#ifdef BH_PLATFORM_LINUX_SGX
+    {
+        /* Pre-allocate maximum memory size on SGX to avoid remapping
+           during memory.grow, which would cause a double-fetch from
+           untrusted memory */
+        map_size = max_page_count * num_bytes_per_page;
+    }
+#else
     {
         map_size = init_page_count * num_bytes_per_page;
     }
+#endif
 #else  /* else of OS_ENABLE_HW_BOUND_CHECK */
     /* Totally 8G is mapped, the opcode load/store address range is 0 to 8G:
      *   ea = i + memarg.offset
