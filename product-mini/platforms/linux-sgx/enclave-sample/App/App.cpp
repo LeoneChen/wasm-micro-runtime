@@ -664,7 +664,7 @@ dump_pgo_prof_data(void *module_inst, const char *path)
 #endif
 
 int
-main(int argc, char *argv[])
+no_main(int argc, char *argv[])
 {
     int32_t ret = -1;
     char *wasm_file = NULL;

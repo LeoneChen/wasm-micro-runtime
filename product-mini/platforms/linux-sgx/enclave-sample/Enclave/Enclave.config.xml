@@ -5,11 +5,12 @@
   <StackMaxSize>0x100000</StackMaxSize>
   <HeapMaxSize>0x8000000</HeapMaxSize>
   <ReservedMemMaxSize>0x1000000</ReservedMemMaxSize>
+  <ReservedMemMinSize>0x1000000</ReservedMemMinSize>
   <ReservedMemExecutable>1</ReservedMemExecutable>
   <TCSNum>10</TCSNum>
   <TCSPolicy>1</TCSPolicy>
   <!-- Debug mode disabled for production enclave security -->
-  <DisableDebug>1</DisableDebug>
-  <MiscSelect>0</MiscSelect>
+  <DisableDebug>0</DisableDebug>
+  <MiscSelect>1</MiscSelect>
   <MiscMask>0xFFFFFFFF</MiscMask>
 </EnclaveConfiguration>
