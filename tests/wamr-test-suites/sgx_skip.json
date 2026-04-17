@@ -1,0 +1,21 @@
+{
+    "WASI Assemblyscript tests": {
+        "proc_exit-failure": "SGX enclave does not return process exit code",
+        "random_get-zero-length": "unsupported by SGX"
+    },
+    "WASI threads proposal": {
+        "wasi_threads_exit_main_block": "",
+        "wasi_threads_exit_main_busy": "warning: SGX pthread_cond_timedwait isn't supported, calling pthread_cond_wait instead!",
+        "wasi_threads_exit_main_wasi_read": "",
+        "wasi_threads_exit_main_wasi": "",
+        "wasi_threads_exit_nonmain_block": "",
+        "wasi_threads_exit_nonmain_busy": "",
+        "wasi_threads_exit_nonmain_wasi_read": "",
+        "wasi_threads_exit_nonmain_wasi": "",
+        "wasi_threads_return_main_block": "",
+        "wasi_threads_return_main_busy": "",
+        "wasi_threads_return_main_wasi_read": "",
+        "wasi_threads_return_main_wasi": "",
+        "wasi_threads_spawn": ""
+    }
+}

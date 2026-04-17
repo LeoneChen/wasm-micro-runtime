@@ -9,6 +9,7 @@ SGX_MODE ?= SIM
 SGX_ARCH ?= x64
 SGX_DEBUG ?= 0
 SPEC_TEST ?= 0
+ENCLAVE_FUZZ ?= 0
 
 # These variables are automatically set by CMakeLists.txt
 WAMR_BUILD_SGX_IPFS = 0
@@ -65,6 +66,10 @@ App_Cpp_Files := App/App.cpp
 App_Include_Paths := -IApp -I$(SGX_SDK)/include
 ifeq ($(WAMR_BUILD_LIB_RATS), 1)
 	App_Include_Paths += -I$(LIB_RATS_INCLUDE_DIR)
+endif
+ifeq ($(ENCLAVE_FUZZ), 1)
+App_Cpp_Files += App/harness.cpp
+App_Include_Paths += -I$(SGX_SDK)/../llvm-project/lib/clang/13.0.1/include/fuzzer
 endif
 
 App_C_Flags := $(SGX_COMMON_CFLAGS) -fPIC -Wno-attributes $(App_Include_Paths) \
@@ -160,12 +165,21 @@ ifeq ($(WAMR_BUILD_LIB_RATS), 1)
 endif
 
 Enclave_Cpp_Flags := $(Enclave_C_Flags) -std=c++11 -nostdinc++
+ifeq ($(ENCLAVE_FUZZ), 1)
+Enclave_Link_Flags := $(SGX_COMMON_CFLAGS) -Wl,--no-undefined -nostdlib -nodefaultlibs -nostartfiles -L$(SGX_LIBRARY_PATH) ${Rats_Lib_Link_Dirs} \
+	-Wl,--whole-archive -lsgxsan_enclave -l$(Trts_Library_Name) ${Rats_Lib_W_Link_libs} $(Intel_Ipfs_Trusted_Flag) -Wl,--no-whole-archive \
+	-Wl,--start-group -lsgx_tstdc -lsgx_tcxx -lsgx_pthread -lsgx_tkey_exchange -l$(Crypto_Library_Name) -l$(Service_Library_Name) $(Rats_Lib_NW_Link_libs) -Wl,--end-group \
+	-Wl,-Bstatic -Wl,-Bsymbolic -Wl,--no-undefined \
+	-Wl,-pie,-eenclave_entry -Wl,--export-dynamic  \
+	-Wl,--defsym,__ImageBase=0
+else
 Enclave_Link_Flags := $(SGX_COMMON_CFLAGS) -Wl,--no-undefined -nostdlib -nodefaultlibs -nostartfiles -L$(SGX_LIBRARY_PATH) ${Rats_Lib_Link_Dirs} \
 	-Wl,--whole-archive -l$(Trts_Library_Name) ${Rats_Lib_W_Link_libs} $(Intel_Ipfs_Trusted_Flag) -Wl,--no-whole-archive \
 	-Wl,--start-group -lsgx_tstdc -lsgx_tcxx -lsgx_pthread -lsgx_tkey_exchange -l$(Crypto_Library_Name) -l$(Service_Library_Name) $(Rats_Lib_NW_Link_libs) -Wl,--end-group \
 	-Wl,-Bstatic -Wl,-Bsymbolic -Wl,--no-undefined \
 	-Wl,-pie,-eenclave_entry -Wl,--export-dynamic  \
 	-Wl,--defsym,__ImageBase=0
+endif
 
 Enclave_Edl_Search_Path     =   --search-path ../Enclave \
 								--search-path $(SGX_SDK)/include \
@@ -189,6 +203,12 @@ endif
 endif
 endif
 
+ifeq ($(ENCLAVE_FUZZ), 1)
+	App_Cpp_Flags += -DENCLAVE_FUZZ=1
+	App_Link_Flags += -ldl -Wl,-whole-archive -lsgxsan_host -Wl,-no-whole-archive -L$(SGX_SDK)/../llvm-project/lib/clang/13.0.1/lib/linux -lclang_rt.fuzzer-x86_64 -Wl,-rpath-link,$(SGX_LIBRARY_PATH)
+	Enclave_C_Flags += -DENCLAVE_FUZZ=1 -fsanitize=address -mllvm -asan-enclave -mllvm -asan-use-after-return=never -mllvm -asan-opt-globals=false -fsanitize-coverage=inline-8bit-counters,pc-table
+	Enclave_Cpp_Flags += -DENCLAVE_FUZZ=1 -fsanitize=address -mllvm -asan-enclave -mllvm -asan-use-after-return=never -mllvm -asan-opt-globals=false -fsanitize-coverage=inline-8bit-counters,pc-table
+endif
 
 .PHONY: all run
 
@@ -219,13 +239,14 @@ endif
 
 App/Enclave_u.c: $(SGX_EDGER8R) Enclave/Enclave.edl librats
 	@cd App && $(SGX_EDGER8R) --untrusted ../Enclave/Enclave.edl $(Enclave_Edl_Search_Path)
+	@clang-format-13 -i $@
 	@echo "GEN  =>  $@"
 
 App/Enclave_u.o: App/Enclave_u.c
 	@$(CC) $(App_C_Flags) -c $< -o $@
 	@echo "CC   <=  $<"
 
-App/%.o: App/%.cpp
+App/%.o: App/%.cpp App/Enclave_u.c
 	@$(CXX) $(App_Cpp_Flags) -c $< -o $@
 	@echo "CXX  <=  $<"
 
@@ -241,13 +262,14 @@ $(App_Name): App/Enclave_u.o $(App_Cpp_Objects) libvmlib_untrusted.a
 ######## Enclave Objects ########
 Enclave/Enclave_t.c: $(SGX_EDGER8R) Enclave/Enclave.edl librats
 	@cd Enclave && $(SGX_EDGER8R) --trusted ../Enclave/Enclave.edl $(Enclave_Edl_Search_Path)
+	@clang-format-13 -i $@
 	@echo "GEN  =>  $@"
 
 Enclave/Enclave_t.o: Enclave/Enclave_t.c
 	@$(CC) $(Enclave_C_Flags) -c $< -o $@
 	@echo "CC   <=  $<"
 
-Enclave/%.o: Enclave/%.cpp
+Enclave/%.o: Enclave/%.cpp Enclave/Enclave_t.c
 	@$(CXX) $(Enclave_Cpp_Flags) -c $< -o $@
 	@echo "CXX  <=  $<"
 
