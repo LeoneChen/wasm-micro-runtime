@@ -262,10 +262,16 @@ static bool runtime_inited = false;
 static void
 handle_cmd_init_runtime(uint64 *args, uint32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 1 || !args) {
+        LOG_ERROR("CMD_INIT_RUNTIME requires at least 1 argument.\n");
+        return;
+    }
     uint32 max_thread_num;
     RuntimeInitArgs init_args;
 
     bh_assert(argc == 1);
+    
 
     /* avoid duplicated init */
     if (runtime_inited) {
@@ -382,28 +388,55 @@ is_xip_file(const uint8 *buf, uint32 size)
 static void
 handle_cmd_load_module(uint64 *args, uint32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 4 || !args) {
+        if (args) args[0] = false;
+        return;
+    }
     uint64 *args_org = args;
     char *wasm_file = *(char **)args++;
     uint32 wasm_file_size = *(uint32 *)args++;
     char *error_buf = *(char **)args++;
     uint32 error_buf_size = *(uint32 *)args++;
-    uint64 total_size = sizeof(EnclaveModule) + (uint64)wasm_file_size;
-    EnclaveModule *enclave_module;
 
     bh_assert(argc == 4);
+
+    /* SECURITY FIX: Double-Fetch Prevention — copy outside-enclave wasm_file
+     * into a trusted enclave buffer immediately, so that all subsequent
+     * accesses use the same trusted snapshot and cannot be tampered with
+     * by a TOCTOU double-fetch attack. */
+    if (!wasm_file || wasm_file_size == 0 || wasm_file_size > 64 * 1024 * 1024) {
+        *(void **)args_org = NULL;
+        return;
+    }
 
     if (!runtime_inited) {
         *(void **)args_org = NULL;
         return;
     }
 
-    if (!is_xip_file((uint8 *)wasm_file, wasm_file_size)) {
+    uint8 *trusted_wasm = (uint8 *)wasm_runtime_malloc(wasm_file_size);
+    if (!trusted_wasm) {
+        set_error_buf(error_buf, error_buf_size,
+                      "WASM module load failed: "
+                      "allocate trusted buffer failed.");
+        *(void **)args_org = NULL;
+        return;
+    }
+    /* Single trusted copy from outside-enclave memory */
+    bh_memcpy_s(trusted_wasm, wasm_file_size, wasm_file, wasm_file_size);
+
+    uint64 total_size = sizeof(EnclaveModule) + (uint64)wasm_file_size;
+    EnclaveModule *enclave_module;
+
+    if (!is_xip_file(trusted_wasm, wasm_file_size)) {
         if (total_size >= UINT32_MAX
             || !(enclave_module = (EnclaveModule *)wasm_runtime_malloc(
                      (uint32)total_size))) {
             set_error_buf(error_buf, error_buf_size,
                           "WASM module load failed: "
                           "allocate memory failed.");
+            wasm_runtime_free(trusted_wasm);
             *(void **)args_org = NULL;
             return;
         }
@@ -419,6 +452,7 @@ handle_cmd_load_module(uint64 *args, uint32 argc)
                      os_get_invalid_handle()))) {
             set_error_buf(error_buf, error_buf_size,
                           "WASM module load failed: mmap memory failed.");
+            wasm_runtime_free(trusted_wasm);
             *(void **)args_org = NULL;
             return;
         }
@@ -428,8 +462,11 @@ handle_cmd_load_module(uint64 *args, uint32 argc)
     }
 
     enclave_module->wasm_file = (uint8 *)enclave_module + sizeof(EnclaveModule);
-    bh_memcpy_s(enclave_module->wasm_file, wasm_file_size, wasm_file,
+    /* Copy from trusted enclave buffer instead of re-reading outside-enclave
+     * pointer, eliminating the double-fetch TOCTOU window. */
+    bh_memcpy_s(enclave_module->wasm_file, wasm_file_size, trusted_wasm,
                 wasm_file_size);
+    wasm_runtime_free(trusted_wasm);
 
     if (!(enclave_module->module =
               wasm_runtime_load(enclave_module->wasm_file, wasm_file_size,
@@ -474,10 +511,19 @@ handle_cmd_load_module(uint64 *args, uint32 argc)
 static void
 handle_cmd_unload_module(uint64 *args, uint32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 1 || !args) {
+        return;
+    }
     uint32 module_handle_id = *(uint32 *)args++;
     EnclaveModule *enclave_module = lookup_module_by_handle(module_handle_id);
 
     bh_assert(argc == 1);
+
+    /* SECURITY FIX: Invalid handle → NULL module, must not dereference */
+    if (!enclave_module) {
+        return;
+    }
 
     if (!runtime_inited) {
         return;
@@ -546,6 +592,11 @@ wasm_runtime_get_module_hash(wasm_module_t module)
 static void
 handle_cmd_instantiate_module(uint64 *args, uint32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 5 || !args) {
+        if (args) args[0] = false;
+        return;
+    }
     uint64 *args_org = args;
     uint32 module_handle_id = *(uint32 *)args++;
     EnclaveModule *enclave_module = lookup_module_by_handle(module_handle_id);
@@ -556,6 +607,7 @@ handle_cmd_instantiate_module(uint64 *args, uint32 argc)
     wasm_module_inst_t module_inst;
 
     bh_assert(argc == 5);
+    
 
     if (!runtime_inited || !enclave_module) {
         *(void **)args_org = NULL;
@@ -583,11 +635,19 @@ handle_cmd_instantiate_module(uint64 *args, uint32 argc)
 static void
 handle_cmd_deinstantiate_module(uint64 *args, uint32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 1 || !args) {
+        return;
+    }
     uint32 instance_handle_id = *(uint32 *)args++;
     wasm_module_inst_t module_inst =
         lookup_instance_by_handle(instance_handle_id);
 
     bh_assert(argc == 1);
+
+    if (!module_inst) {
+        return;
+    }
 
     if (!runtime_inited) {
         return;
@@ -603,6 +663,11 @@ handle_cmd_deinstantiate_module(uint64 *args, uint32 argc)
 static void
 handle_cmd_get_exception(uint64 *args, uint32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 3 || !args) {
+        if (args) args[0] = false;
+        return;
+    }
     uint64 *args_org = args;
     uint32 instance_handle_id = *(uint32 *)args++;
     wasm_module_inst_t module_inst =
@@ -612,6 +677,7 @@ handle_cmd_get_exception(uint64 *args, uint32 argc)
     const char *exception1;
 
     bh_assert(argc == 3);
+    
 
     if (!runtime_inited) {
         args_org[0] = false;
@@ -630,15 +696,24 @@ handle_cmd_get_exception(uint64 *args, uint32 argc)
 static void
 handle_cmd_exec_app_main(uint64 *args, int32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 3 || !args) {
+        return;
+    }
     uint32 instance_handle_id = *(uint32 *)args++;
     wasm_module_inst_t module_inst =
         lookup_instance_by_handle(instance_handle_id);
     uint32 app_argc = *(uint32 *)args++;
+
+    /* Validate app_argc does not exceed available args */
+    if (app_argc + 2 > (uint32)argc) {
+        return;
+    }
+
     char **app_argv = NULL;
     uint64 total_size;
     int32 i;
-
-    bh_assert(argc >= 3);
+    
     bh_assert(app_argc >= 1);
 
     if (!runtime_inited) {
@@ -665,14 +740,24 @@ handle_cmd_exec_app_main(uint64 *args, int32 argc)
 static void
 handle_cmd_exec_app_func(uint64 *args, int32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 3 || !args) {
+        return;
+    }
     uint32 instance_handle_id = *(uint32 *)args++;
     wasm_module_inst_t module_inst =
         lookup_instance_by_handle(instance_handle_id);
     char *func_name = *(char **)args++;
+    if (!func_name || !sgx_is_within_enclave(func_name, 1)) {
+        return;
+    }
     uint32 app_argc = *(uint32 *)args++;
     char **app_argv = NULL;
     uint64 total_size;
-    int32 i, func_name_len = strlen(func_name);
+    int32 i, func_name_len = strnlen(func_name, 1024);
+    if (func_name_len == 1024) {
+        return;
+    }
 
     bh_assert(argc == app_argc + 3);
 
@@ -700,6 +785,10 @@ handle_cmd_exec_app_func(uint64 *args, int32 argc)
 static void
 handle_cmd_set_log_level(uint64 *args, uint32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 3 || !args) {
+        return;
+    }
 #if WASM_ENABLE_LOG != 0
     LOG_VERBOSE("Set log verbose level to %d.\n", (int)args[0]);
     bh_log_set_verbose_level((int)args[0]);
@@ -710,6 +799,15 @@ handle_cmd_set_log_level(uint64 *args, uint32 argc)
 static void
 handle_cmd_set_wasi_args(uint64 *args, int32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments
+     * Function reads 12 args (indices 0-11): module_handle_id,
+     * dir_list, dir_list_size, env_list, env_list_size, stdinfd,
+     * stdoutfd, stderrfd, wasi_argv, wasi_argc, addr_pool_list,
+     * addr_pool_list_size */
+    if (argc < 12 || !args) {
+        if (args) args[0] = false;
+        return;
+    }
     uint64 *args_org = args;
     uint32 module_handle_id = *(uint32 *)args++;
     EnclaveModule *enclave_module = lookup_module_by_handle(module_handle_id);
@@ -728,7 +826,7 @@ handle_cmd_set_wasi_args(uint64 *args, int32 argc)
     uint64 total_size = 0;
     int32 i, str_len;
 
-    bh_assert(argc == 10);
+    bh_assert(argc == 12);
 
     if (!runtime_inited || !enclave_module) {
         *args_org = false;
@@ -873,6 +971,10 @@ handle_cmd_set_wasi_args(uint64 *args, int32 argc)
 static void
 handle_cmd_set_wasi_args(uint64 *args, int32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 3 || !args) {
+        return;
+    }
     *args = true;
 }
 #endif /* end of WASM_ENABLE_LIBC_WASI != 0 */
@@ -880,8 +982,13 @@ handle_cmd_set_wasi_args(uint64 *args, int32 argc)
 static void
 handle_cmd_get_version(uint64 *args, uint32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 3 || !args) {
+        return;
+    }
     uint32 major, minor, patch;
     bh_assert(argc == 3);
+    
 
     wasm_runtime_get_version(&major, &minor, &patch);
     args[0] = major;
@@ -893,10 +1000,16 @@ handle_cmd_get_version(uint64 *args, uint32 argc)
 static void
 handle_cmd_get_pgo_prof_buf_size(uint64 *args, int32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 1 || !args) {
+        if (args) args[0] = false;
+        return;
+    }
     wasm_module_inst_t module_inst = *(wasm_module_inst_t *)args;
     uint32 buf_len;
 
     bh_assert(argc == 1);
+    
 
     if (!runtime_inited) {
         args[0] = 0;
@@ -910,6 +1023,11 @@ handle_cmd_get_pgo_prof_buf_size(uint64 *args, int32 argc)
 static void
 handle_cmd_get_pro_prof_buf_data(uint64 *args, int32 argc)
 {
+    /* SECURITY FIX: Reject calls with insufficient arguments */
+    if (argc < 3 || !args) {
+        if (args) args[0] = false;
+        return;
+    }
     uint64 *args_org = args;
     wasm_module_inst_t module_inst = *(wasm_module_inst_t *)args++;
     char *buf = *(char **)args++;
@@ -917,6 +1035,7 @@ handle_cmd_get_pro_prof_buf_data(uint64 *args, int32 argc)
     uint32 bytes_dumped;
 
     bh_assert(argc == 3);
+    
 
     if (!runtime_inited) {
         args_org[0] = 0;
@@ -1055,18 +1174,37 @@ ecall_iwasm_main(uint8_t *wasm_file_buf, uint32_t wasm_file_size)
         return;
     }
 
-    /* load WASM module */
-    if (!(wasm_module = wasm_runtime_load(wasm_file_buf, wasm_file_size,
+    /* SECURITY FIX: Double-Fetch Prevention — copy outside-enclave wasm_file_buf
+     * into a trusted enclave buffer before any reads, preventing TOCTOU attacks.
+     * Same pattern as handle_cmd_load_module. */
+    uint8 *trusted_wasm = NULL;
+    if (!wasm_file_buf || wasm_file_size == 0 || wasm_file_size > 64 * 1024 * 1024) {
+        enclave_print("Invalid WASM buffer.\n");
+        goto fail0;
+    }
+
+    trusted_wasm = (uint8 *)wasm_runtime_malloc(wasm_file_size);
+    if (!trusted_wasm) {
+        enclave_print("Allocate trusted buffer failed.\n");
+        goto fail0;
+    }
+    /* Single trusted copy from outside-enclave memory */
+    bh_memcpy_s(trusted_wasm, wasm_file_size, wasm_file_buf, wasm_file_size);
+
+    /* load WASM module — use only the trusted enclave copy */
+    if (!(wasm_module = wasm_runtime_load(trusted_wasm, wasm_file_size,
                                           error_buf, sizeof(error_buf)))) {
         enclave_print(error_buf);
         enclave_print("\n");
         goto fail1;
     }
 
+    /* Trusted buffer no longer needed after load */
+    wasm_runtime_free(trusted_wasm);
+    trusted_wasm = NULL;
+
     /* instantiate the module */
-    if (!(wasm_module_inst =
-              wasm_runtime_instantiate(wasm_module, 16 * 1024, 16 * 1024,
-                                       error_buf, sizeof(error_buf)))) {
+    if (!(wasm_module_inst =              wasm_runtime_instantiate(wasm_module, 16 * 1024, 16 * 1024,                                       error_buf, sizeof(error_buf)))) {
         enclave_print(error_buf);
         enclave_print("\n");
         goto fail2;
@@ -1087,6 +1225,11 @@ fail2:
     wasm_runtime_unload(wasm_module);
 
 fail1:
+    if (trusted_wasm) {
+        wasm_runtime_free(trusted_wasm);
+    }
+
+fail0:
     /* destroy runtime environment */
     wasm_runtime_destroy();
 }

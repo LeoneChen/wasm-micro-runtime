@@ -51,6 +51,7 @@
 // TODO (bootstrap): Replace with the APP-specific untrusted header.
 // Derived from EDL_PATH basename: e.g. secure_enclave.edl → secure_enclave_u.h
 // #include "<edl_basename>_u.h"
+#include "Enclave_u.h"
 #include <sgx_urts.h>
 #include <stdint.h>
 #include <inttypes.h>
@@ -107,8 +108,15 @@ static int total_weight = 0;
 // TODO (bootstrap): Uncomment / add #include lines as harness_fns/ files are
 // created. OCall wrappers first, then ECall harnesses in any order.
 // ============================================================================
-// #include "harness_fns/ocall_wrappers.h"
-// #include "harness_fns/harness_ecall_foo.h"
+#include "harness_fns/ocall_wrappers.h"
+#include "harness_fns/harness_ecall_handle_command.h"
+#include "harness_fns/harness_ecall_iwasm_main.h"
+#include "harness_fns/harness_workflow_full_lifecycle.h"
+#include "harness_fns/harness_load_wasm_magic.h"
+#include "harness_fns/harness_aot_xip.h"
+#include "harness_fns/harness_valid_wasm.h"
+#include "harness_fns/harness_wasm_direct_exec.h"
+#include "harness_fns/harness_exec_minimal.h"
 
 
 // ============================================================================
